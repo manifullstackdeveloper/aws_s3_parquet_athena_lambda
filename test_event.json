@@ -1,0 +1,24 @@
+{
+  "Records": [
+    {
+      "eventVersion": "2.1",
+      "eventSource": "aws:s3",
+      "awsRegion": "us-east-1",
+      "eventTime": "2025-12-03T14:30:45.123Z",
+      "eventName": "ObjectCreated:Put",
+      "s3": {
+        "s3SchemaVersion": "1.0",
+        "configurationId": "test-config",
+        "bucket": {
+          "name": "fhir-lca-persist",
+          "arn": "arn:aws:s3:::fhir-lca-persist"
+        },
+        "object": {
+          "key": "test/example_payload.json",
+          "size": 1024
+        }
+      }
+    }
+  ]
+}
+

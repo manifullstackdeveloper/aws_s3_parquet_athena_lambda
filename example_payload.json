@@ -1,0 +1,62 @@
+[
+  {
+    "approximateReceiveCount": 1,
+    "customerId": "CUST-12345",
+    "patientId": "PT-67890",
+    "sourceFhirServer": "https://fhir.example.com",
+    "requestResourceId": "Patient/PT-67890",
+    "bundleResourceType": "Patient",
+    "statusCode": 200,
+    "operationOutcome": [],
+    "responseTs": "2025-12-03T14:30:45.123Z",
+    "latencyMs": 245,
+    "datastoreId": "ds-healthlake-001"
+  },
+  {
+    "approximateReceiveCount": 1,
+    "customerId": "CUST-12345",
+    "patientId": "PT-11111",
+    "sourceFhirServer": "https://fhir.example.com",
+    "requestResourceId": "Observation/OBS-001",
+    "bundleResourceType": "Observation",
+    "statusCode": 400,
+    "operationOutcome": [
+      {
+        "location": "Bundle.entry[0].resource",
+        "severity": "error",
+        "code": "invalid",
+        "detail": "Invalid resource format: missing required field 'status'"
+      }
+    ],
+    "responseTs": "2025-12-03T14:31:12.456Z",
+    "latencyMs": 189,
+    "datastoreId": "ds-healthlake-001"
+  },
+  {
+    "approximateReceiveCount": 2,
+    "customerId": "CUST-67890",
+    "patientId": "PT-22222",
+    "sourceFhirServer": "https://fhir-dxa.example.com",
+    "requestResourceId": "DiagnosticReport/DR-001",
+    "bundleResourceType": "DiagnosticReport",
+    "statusCode": 422,
+    "operationOutcome": [
+      {
+        "location": "Bundle.entry[0].resource.code",
+        "severity": "warning",
+        "code": "code-invalid",
+        "detail": "Code system not recognized: http://example.org/unknown-codes"
+      },
+      {
+        "location": "Bundle.entry[0].resource.performer",
+        "severity": "warning",
+        "code": "missing",
+        "detail": "Performer reference not found"
+      }
+    ],
+    "responseTs": "2025-12-03T14:32:05.789Z",
+    "latencyMs": 512,
+    "datastoreId": "ds-healthlake-002"
+  }
+]
+

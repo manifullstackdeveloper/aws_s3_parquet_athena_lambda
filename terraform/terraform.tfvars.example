@@ -1,0 +1,32 @@
+# Copy this file to terraform.tfvars and update with your values
+
+aws_region     = "us-east-1"
+environment    = "dev"
+
+# S3 Bucket names (will be created automatically)
+source_bucket  = "fhir-lca-persist"
+target_bucket  = "fhir-ingest-analytics"
+create_buckets = true  # Set to false if buckets already exist
+force_destroy_buckets = true  # Allow terraform destroy even with objects (dev/test only)
+s3_filter_prefix = ""
+log_retention_days = 7
+lambda_zip_path = "../lambda_function.zip"
+
+# Lambda Layer Configuration
+# Option 1: Use AWS public layer (recommended, no build needed)
+use_aws_public_layer = true
+lambda_layer_zip_path = ""
+
+# Option 2: Use custom layer (requires building layer first)
+# use_aws_public_layer = false
+# lambda_layer_zip_path = "../lambda_layer.zip"
+
+# SSM Parameters (set to false if you lack SSM permissions)
+create_ssm_parameters = false
+
+# Glue configuration
+glue_database_name = "fhir_analytics"
+glue_table_name = "fhir_ingest_analytics"
+glue_partition_sources = ["lca-persist", "dxa-persist"]
+glue_partition_date_start = "2025-01-01"
+

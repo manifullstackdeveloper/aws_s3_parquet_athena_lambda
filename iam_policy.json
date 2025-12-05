@@ -1,0 +1,51 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:*:*:log-group:/aws/lambda/fhir-analytics-json-to-parquet*"
+    },
+    {
+      "Sid": "S3SourceRead",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::fhir-lca-persist",
+        "arn:aws:s3:::fhir-lca-persist/*"
+      ]
+    },
+    {
+      "Sid": "S3TargetWrite",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:HeadObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::fhir-ingest-analytics",
+        "arn:aws:s3:::fhir-ingest-analytics/*"
+      ]
+    },
+    {
+      "Sid": "SSMParameters",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": "arn:aws:ssm:*:*:parameter/myapp/*"
+    }
+  ]
+}
+
