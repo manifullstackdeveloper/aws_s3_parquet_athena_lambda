@@ -34,6 +34,12 @@ variable "force_destroy_buckets" {
   default     = true
 }
 
+variable "enable_s3_versioning" {
+  description = "Enable S3 bucket versioning. Disable to reduce costs. Not required for this use case."
+  type        = bool
+  default     = false
+}
+
 variable "s3_filter_prefix" {
   description = "S3 key prefix filter for notifications"
   type        = string

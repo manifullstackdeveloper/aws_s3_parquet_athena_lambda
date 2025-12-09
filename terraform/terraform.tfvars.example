@@ -8,6 +8,7 @@ source_bucket  = "fhir-lca-persist"
 target_bucket  = "fhir-ingest-analytics"
 create_buckets = true  # Set to false if buckets already exist
 force_destroy_buckets = true  # Allow terraform destroy even with objects (dev/test only)
+enable_s3_versioning = false  # Disable to reduce costs (not required for this use case)
 s3_filter_prefix = ""
 log_retention_days = 7
 lambda_zip_path = "../lambda_function.zip"

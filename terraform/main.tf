@@ -65,8 +65,10 @@ resource "aws_s3_bucket" "source" {
   )
 }
 
-# Enable versioning on source bucket
+# Enable versioning on source bucket (optional)
 resource "aws_s3_bucket_versioning" "source" {
+  count = var.enable_s3_versioning ? 1 : 0
+  
   bucket = aws_s3_bucket.source.id
   
   versioning_configuration {
@@ -99,8 +101,10 @@ resource "aws_s3_bucket" "target" {
   )
 }
 
-# Enable versioning on target bucket
+# Enable versioning on target bucket (optional)
 resource "aws_s3_bucket_versioning" "target" {
+  count = var.enable_s3_versioning ? 1 : 0
+  
   bucket = aws_s3_bucket.target.id
   
   versioning_configuration {

@@ -1,5 +1,7 @@
 [
   {
+    "s3Filename": "abc123-response.json",
+    "source": "lca-persist",
     "approximateReceiveCount": 1,
     "customerId": "CUST-12345",
     "patientId": "PT-67890",
@@ -13,6 +15,8 @@
     "datastoreId": "ds-healthlake-001"
   },
   {
+    "s3Filename": "abc234-response.json",
+    "source": "lca-persist",
     "approximateReceiveCount": 1,
     "customerId": "CUST-12345",
     "patientId": "PT-11111",
@@ -33,6 +37,8 @@
     "datastoreId": "ds-healthlake-001"
   },
   {
+    "s3Filename": "abc333-response.json",
+    "source": "lca-persist",
     "approximateReceiveCount": 2,
     "customerId": "CUST-67890",
     "patientId": "PT-22222",
