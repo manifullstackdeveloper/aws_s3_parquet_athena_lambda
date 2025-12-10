@@ -26,27 +26,6 @@ locals {
   }
 }
 
-# SSM Parameters for configuration (optional)
-resource "aws_ssm_parameter" "source_bucket" {
-  count = var.create_ssm_parameters ? 1 : 0
-  
-  name  = "/myapp/source-bucket"
-  type  = "String"
-  value = local.source_bucket
-  
-  tags = local.common_tags
-}
-
-resource "aws_ssm_parameter" "target_bucket" {
-  count = var.create_ssm_parameters ? 1 : 0
-  
-  name  = "/myapp/target-bucket"
-  type  = "String"
-  value = local.target_bucket
-  
-  tags = local.common_tags
-}
-
 # ============================================================================
 # S3 Buckets
 # ============================================================================
@@ -63,17 +42,6 @@ resource "aws_s3_bucket" "source" {
       Purpose = "JSON file ingestion"
     }
   )
-}
-
-# Enable versioning on source bucket (optional)
-resource "aws_s3_bucket_versioning" "source" {
-  count = var.enable_s3_versioning ? 1 : 0
-  
-  bucket = aws_s3_bucket.source.id
-  
-  versioning_configuration {
-    status = "Enabled"
-  }
 }
 
 # Enable encryption on source bucket
@@ -101,17 +69,6 @@ resource "aws_s3_bucket" "target" {
   )
 }
 
-# Enable versioning on target bucket (optional)
-resource "aws_s3_bucket_versioning" "target" {
-  count = var.enable_s3_versioning ? 1 : 0
-  
-  bucket = aws_s3_bucket.target.id
-  
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
 # Enable encryption on target bucket
 resource "aws_s3_bucket_server_side_encryption_configuration" "target" {
   bucket = aws_s3_bucket.target.id
@@ -121,6 +78,40 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "target" {
       sse_algorithm = "AES256"
     }
   }
+}
+
+# Lifecycle policy for source bucket (retention)
+resource "aws_s3_bucket_lifecycle_configuration" "source" {
+  count  = var.s3_retention_days > 0 ? 1 : 0
+  bucket = aws_s3_bucket.source.id
+
+  rule {
+    id     = "delete-old-files"
+    status = "Enabled"
+
+    expiration {
+      days = var.s3_retention_days
+    }
+  }
+
+  depends_on = [aws_s3_bucket_server_side_encryption_configuration.source]
+}
+
+# Lifecycle policy for target bucket (retention)
+resource "aws_s3_bucket_lifecycle_configuration" "target" {
+  count  = var.s3_retention_days > 0 ? 1 : 0
+  bucket = aws_s3_bucket.target.id
+
+  rule {
+    id     = "delete-old-files"
+    status = "Enabled"
+
+    expiration {
+      days = var.s3_retention_days
+    }
+  }
+
+  depends_on = [aws_s3_bucket_server_side_encryption_configuration.target]
 }
 
 # IAM Role for Lambda
@@ -188,15 +179,17 @@ resource "aws_iam_role_policy" "lambda_policy" {
         ]
       },
       {
-        Sid    = "SSMParameters"
+        Sid    = "CloudWatchMetrics"
         Effect = "Allow"
         Action = [
-          "ssm:GetParameter",
-          "ssm:GetParameters"
+          "cloudwatch:PutMetricData"
         ]
-        Resource = [
-          "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/myapp/*"
-        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "FHIRAnalytics/Lambda"
+          }
+        }
       }
     ]
   })
@@ -214,6 +207,14 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
   retention_in_days = var.log_retention_days
   
   tags = local.common_tags
+
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes = [
+      # Ignore changes to retention_in_days if manually changed
+      retention_in_days
+    ]
+  }
 }
 
 # Lambda Layer for awswrangler (Python dependencies)
@@ -248,15 +249,29 @@ locals {
   layer_arn = var.use_aws_public_layer ? lookup(local.aws_sdk_pandas_layer_arns, var.aws_region, local.aws_sdk_pandas_layer_arns["us-east-1"]) : aws_lambda_layer_version.awswrangler[0].arn
 }
 
+# ============================================================================
+# Lambda Function - JSON to Parquet Converter
+# ============================================================================
+# Architecture Flow:
+#   S3 Source Bucket (fhir-lca-persist) 
+#     -> [S3 Event Notification] 
+#   Lambda Function (fhir-analytics-json-to-parquet)
+#     -> [Writes Parquet files]
+#   S3 Target Bucket (fhir-ingest-analytics/data/)
+#     -> [Partitioned by: source/ingest_date/hour/]
+#   AWS Glue Catalog (fhir_analytics.fhir_ingest_analytics)
+#     -> [Queryable via Athena]
+# ============================================================================
+
 # Lambda Function
 resource "aws_lambda_function" "analytics_lambda" {
   function_name = local.function_name
-  description   = "Convert JSON files to Parquet format with partitioning"
+  description   = "Convert JSON files from ${local.source_bucket} to Parquet format and write to ${local.target_bucket}/data/ with partitioning (source/ingest_date/hour)"
   role          = aws_iam_role.lambda_role.arn
   handler       = "lambda_function.lambda_handler"
   runtime       = "python3.12"
-  timeout       = 300
-  memory_size   = 512
+  timeout       = var.lambda_timeout
+  memory_size   = var.lambda_memory_size
   
   filename         = var.lambda_zip_path
   source_code_hash = filebase64sha256(var.lambda_zip_path)
@@ -264,6 +279,9 @@ resource "aws_lambda_function" "analytics_lambda" {
   layers = [
     local.layer_arn
   ]
+  
+  # Cost optimization: Reserved concurrency to prevent runaway costs
+  reserved_concurrent_executions = var.lambda_reserved_concurrency
   
   environment {
     variables = {
@@ -278,10 +296,26 @@ resource "aws_lambda_function" "analytics_lambda" {
     aws_iam_role_policy.lambda_policy
   ]
   
-  tags = local.common_tags
+  tags = merge(
+    local.common_tags,
+    {
+      SourceBucket     = local.source_bucket
+      TargetBucket     = local.target_bucket
+      DataFlow         = "S3-to-Lambda-to-S3"
+      OutputLocation   = "s3://${local.target_bucket}/data/"
+    }
+  )
 }
 
+# ============================================================================
+# S3 Event Trigger Configuration
+# ============================================================================
+# Configures S3 source bucket to trigger Lambda on JSON file uploads
+# Flow: S3 Source -> Lambda -> S3 Target (Parquet output)
+# ============================================================================
+
 # S3 Bucket Notification Permission
+# Allows S3 to invoke Lambda function
 resource "aws_lambda_permission" "s3_invoke" {
   statement_id  = "AllowS3Invoke"
   action        = "lambda:InvokeFunction"
@@ -291,6 +325,7 @@ resource "aws_lambda_permission" "s3_invoke" {
 }
 
 # S3 Bucket Notification
+# Triggers Lambda when JSON files are created in source bucket
 resource "aws_s3_bucket_notification" "source_bucket_notification" {
   bucket = aws_s3_bucket.source.id
   
@@ -303,6 +338,10 @@ resource "aws_s3_bucket_notification" "source_bucket_notification" {
   
   depends_on = [aws_lambda_permission.s3_invoke]
 }
+
+# Note: Lambda writes output to target bucket (${local.target_bucket}/data/)
+# This is configured in the Lambda function code and IAM permissions above.
+# The target bucket path follows: s3://${local.target_bucket}/data/source={source}/ingest_date={date}/hour={hour}/
 
 # Data source for current AWS account
 data "aws_caller_identity" "current" {}
@@ -334,7 +373,7 @@ resource "aws_glue_catalog_table" "fhir_ingest_analytics" {
     "parquet.compression"             = "SNAPPY"
     "projection.enabled"              = "true"
     "projection.source.type"          = "enum"
-    "projection.source.values"        = "lca-persist,dxa-persist"
+    "projection.source.values"        = join(",", var.glue_partition_sources)
     "projection.ingest_date.type"     = "date"
     "projection.ingest_date.range"    = "2025-01-01,NOW"
     "projection.ingest_date.format"   = "yyyy-MM-dd"
@@ -432,7 +471,7 @@ resource "aws_glue_catalog_table" "fhir_ingest_analytics" {
     
     columns {
       name = "responseTs"
-      type = "string"
+      type = "timestamp"
       comment = "Response timestamp"
     }
     
@@ -471,6 +510,332 @@ resource "aws_glue_catalog_table" "fhir_ingest_analytics" {
   }
   
   depends_on = [aws_glue_catalog_database.fhir_analytics]
+}
+
+# ============================================================================
+# Athena Resources - Query Configuration
+# ============================================================================
+
+# S3 Bucket for Athena Query Results
+resource "aws_s3_bucket" "athena_results" {
+  bucket        = "${local.target_bucket}-athena-results"
+  force_destroy = var.force_destroy_buckets
+  
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "Athena Query Results Bucket"
+      Purpose = "Athena query result storage"
+    }
+  )
+}
+
+# Enable encryption on Athena results bucket
+resource "aws_s3_bucket_server_side_encryption_configuration" "athena_results" {
+  bucket = aws_s3_bucket.athena_results.id
+  
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Lifecycle policy for Athena results bucket (optional cleanup)
+resource "aws_s3_bucket_lifecycle_configuration" "athena_results" {
+  count  = var.athena_results_retention_days > 0 ? 1 : 0
+  bucket = aws_s3_bucket.athena_results.id
+
+  rule {
+    id     = "delete-old-results"
+    status = "Enabled"
+
+    expiration {
+      days = var.athena_results_retention_days
+    }
+  }
+
+  depends_on = [aws_s3_bucket_server_side_encryption_configuration.athena_results]
+}
+
+# Athena Workgroup
+resource "aws_athena_workgroup" "fhir_analytics" {
+  name        = var.athena_workgroup_name
+  description = "Athena workgroup for FHIR analytics queries"
+  state       = "ENABLED"
+
+  configuration {
+    enforce_workgroup_configuration    = false
+    publish_cloudwatch_metrics_enabled = true
+
+    result_configuration {
+      output_location = "s3://${aws_s3_bucket.athena_results.bucket}/results/"
+
+      encryption_configuration {
+        encryption_option = "SSE_S3"
+      }
+    }
+
+    engine_version {
+      selected_engine_version = "Athena engine version 3"
+    }
+  }
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "FHIR Analytics Athena Workgroup"
+    }
+  )
+
+  lifecycle {
+    # Prevent deletion if workgroup has query history
+    # Use terraform destroy with -target to remove other resources first
+    # Or manually delete query history before destroying workgroup
+    prevent_destroy = false
+  }
+}
+
+# IAM Policy for Athena Queries
+# This policy can be attached to users/roles who need to query Athena
+resource "aws_iam_policy" "athena_query" {
+  name        = "${local.function_name}-athena-query-policy"
+  description = "IAM policy for querying Athena and accessing Glue catalog"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AthenaQueryAccess"
+        Effect = "Allow"
+        Action = [
+          "athena:BatchGetQueryExecution",
+          "athena:GetQueryExecution",
+          "athena:GetQueryResults",
+          "athena:GetQueryResultsStream",
+          "athena:StartQueryExecution",
+          "athena:StopQueryExecution",
+          "athena:ListQueryExecutions",
+          "athena:GetWorkGroup"
+        ]
+        Resource = [
+          aws_athena_workgroup.fhir_analytics.arn,
+          "arn:aws:athena:${var.aws_region}:${data.aws_caller_identity.current.account_id}:datacatalog/*"
+        ]
+      },
+      {
+        Sid    = "GlueCatalogAccess"
+        Effect = "Allow"
+        Action = [
+          "glue:GetDatabase",
+          "glue:GetDatabases",
+          "glue:GetTable",
+          "glue:GetTables",
+          "glue:GetPartition",
+          "glue:GetPartitions",
+          "glue:BatchGetPartition"
+        ]
+        Resource = [
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/${aws_glue_catalog_database.fhir_analytics.name}",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${aws_glue_catalog_database.fhir_analytics.name}/*"
+        ]
+      },
+      {
+        Sid    = "S3DataReadAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.target.arn,
+          "${aws_s3_bucket.target.arn}/*"
+        ]
+      },
+      {
+        Sid    = "S3ResultsWriteAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          "${aws_s3_bucket.athena_results.arn}/results/*"
+        ]
+      },
+      {
+        Sid    = "S3ResultsListAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.athena_results.arn
+        ]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "results/*"
+            ]
+          }
+        }
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+# ============================================================================
+# CloudWatch Monitoring & Alarms
+# ============================================================================
+
+# SNS Topic for Alerts
+resource "aws_sns_topic" "lambda_alerts" {
+  name         = "${local.function_name}-alerts"
+  display_name = "FHIR Analytics Lambda Alerts"
+  
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "Lambda Alerts Topic"
+    }
+  )
+}
+
+# SNS Topic Subscription (email - optional, can be configured via variable)
+resource "aws_sns_topic_subscription" "lambda_alerts_email" {
+  count     = var.alert_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.lambda_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# CloudWatch Alarm: High Error Rate
+resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
+  alarm_name          = "${local.function_name}-high-error-rate"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300  # 5 minutes
+  statistic           = "Sum"
+  threshold           = var.error_rate_threshold
+  alarm_description   = "This metric monitors lambda error rate"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.analytics_lambda.function_name
+  }
+
+  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+
+  tags = local.common_tags
+}
+
+# CloudWatch Alarm: Custom Error Rate (from custom metrics)
+resource "aws_cloudwatch_metric_alarm" "custom_error_rate" {
+  alarm_name          = "${local.function_name}-custom-error-rate"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "Errors"
+  namespace           = "FHIRAnalytics/Lambda"
+  period              = 300  # 5 minutes
+  statistic           = "Sum"
+  threshold           = var.error_rate_threshold
+  alarm_description   = "This metric monitors custom error rate from application"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+
+  tags = local.common_tags
+}
+
+# CloudWatch Alarm: Duration (approaching timeout)
+resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
+  alarm_name          = "${local.function_name}-high-duration"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = 300  # 5 minutes
+  statistic           = "Average"
+  threshold           = var.lambda_timeout * 1000 * 0.8  # 80% of timeout in milliseconds
+  alarm_description   = "This metric monitors lambda execution duration (warning at 80% of timeout)"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.analytics_lambda.function_name
+  }
+
+  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+
+  tags = local.common_tags
+}
+
+# CloudWatch Alarm: Throttles
+resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
+  alarm_name          = "${local.function_name}-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = 300  # 5 minutes
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "This metric monitors lambda throttles"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.analytics_lambda.function_name
+  }
+
+  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+
+  tags = local.common_tags
+}
+
+# CloudWatch Alarm: Fatal Errors (from custom metrics)
+resource "aws_cloudwatch_metric_alarm" "fatal_errors" {
+  alarm_name          = "${local.function_name}-fatal-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "FatalErrors"
+  namespace           = "FHIRAnalytics/Lambda"
+  period              = 300  # 5 minutes
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "This metric monitors fatal errors that prevent function execution"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+
+  tags = local.common_tags
+}
+
+# CloudWatch Alarm: No Invocations (staleness check)
+resource "aws_cloudwatch_metric_alarm" "no_invocations" {
+  count               = var.enable_staleness_alarm ? 1 : 0
+  alarm_name          = "${local.function_name}-no-invocations"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Invocations"
+  namespace           = "AWS/Lambda"
+  period              = 86400  # 24 hours
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "This metric monitors if lambda hasn't been invoked in 24 hours"
+  treat_missing_data  = "breaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.analytics_lambda.function_name
+  }
+
+  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+
+  tags = local.common_tags
 }
 
 # Outputs moved to outputs.tf

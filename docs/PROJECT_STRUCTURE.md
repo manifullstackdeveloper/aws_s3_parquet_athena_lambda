@@ -25,32 +25,32 @@ aws_s3_parquet_glue_athena/
 │       └── README.md               # Terraform guide
 │
 ├── 🧪 Testing
+│   ├── test_lambda_athena.py       # End-to-end test (Lambda + Athena)
 │   ├── test_local.py               # Local Lambda testing
 │   ├── test_local_with_output.py   # Test with Parquet output
 │   ├── test_unit.py                # Unit tests (pytest)
 │   ├── test_event.json             # Sample S3 event
 │   └── test_data/                  # Test JSON files
-│       ├── example_payload.json
-│       ├── test_single_object.json
-│       ├── test_jsonl.json
-│       └── test_multiple_outcomes.json
+│       ├── lca-persist-input.json
+│       └── dxa-persist-input.json
 │
 ├── 📚 Documentation
 │   ├── README.md                   # Main documentation
-│   ├── DEPLOYMENT_GUIDE.md         # Step-by-step deployment
-│   ├── LOCAL_TESTING.md            # Complete testing guide
-│   ├── TESTING_QUICKSTART.md       # 30-second test guide
-│   ├── ARCHITECTURE.md             # System architecture
-│   ├── DIAGRAMS.md                 # Mermaid diagrams
-│   ├── GLUE_SETUP.md              # Glue configuration
-│   ├── TERRAFORM_DESTROY.md        # Destroy procedures
-│   ├── TERRAFORM_UPDATES.md        # What changed
-│   └── OPERATION_OUTCOME_EXPLOSION.md # Array explosion guide
+│   ├── TESTING_GUIDE.md            # Testing guide
+│   └── docs/
+│       ├── DEPLOYMENT_GUIDE.md     # Step-by-step deployment
+│       ├── ARCHITECTURE.md         # System architecture
+│       ├── ERROR_HANDLING.md        # Error handling & monitoring
+│       ├── GLUE_SETUP.md           # Glue configuration
+│       ├── COST_OPTIMIZATION.md    # Cost optimization guide
+│       ├── TERRAFORM_DESTROY.md    # Destroy procedures
+│       └── [other docs...]
 │
 ├── 📋 Reference Files
-│   ├── athena_ddl.sql              # Manual DDL reference
-│   ├── iam_policy.json             # IAM permissions
-│   └── example_payload.json        # Example input data
+│   ├── athena_ddl.sql              # Manual DDL reference (not needed - auto-created)
+│   ├── iam_policy.json             # IAM permissions reference
+│   ├── reprocess_parquet_files.py  # Utility to fix existing Parquet files
+│   └── cleanup_athena_workgroup.sh # Utility to clean Athena workgroup
 │
 └── 🗑️ Auto-Generated (gitignored)
     ├── lambda_function.zip         # Built by build.sh

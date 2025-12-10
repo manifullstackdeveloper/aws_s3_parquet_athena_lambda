@@ -8,7 +8,7 @@ source_bucket  = "fhir-lca-persist"
 target_bucket  = "fhir-ingest-analytics"
 create_buckets = true  # Set to false if buckets already exist
 force_destroy_buckets = true  # Allow terraform destroy even with objects (dev/test only)
-enable_s3_versioning = false  # Disable to reduce costs (not required for this use case)
+s3_retention_days = 0  # Number of days to retain files (0 = keep indefinitely)
 s3_filter_prefix = ""
 log_retention_days = 7
 lambda_zip_path = "../lambda_function.zip"
@@ -21,9 +21,6 @@ lambda_layer_zip_path = ""
 # Option 2: Use custom layer (requires building layer first)
 # use_aws_public_layer = false
 # lambda_layer_zip_path = "../lambda_layer.zip"
-
-# SSM Parameters (set to false if you lack SSM permissions)
-create_ssm_parameters = false
 
 # Glue configuration
 glue_database_name = "fhir_analytics"

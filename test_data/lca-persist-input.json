@@ -1,0 +1,71 @@
+{
+  "meta": {
+    "s3Filename": "customer1/2025/10/10/bundle_20251209.json",
+    "approxmiateReceiveCount": 3,
+    "source": "lca-persist",
+    "organizationId": "customer1",
+    "patientId": "pat-12345",
+    "lpid": "9151683722869520",
+    "sourceFhirServer": "https://fhir.source.example.com",
+    "bundleResourceType": "Observation",
+    "responseTs": "2025-12-09T18:31:45Z",
+    "latencyMs": 452,
+    "datastoreId": "hlk-001122334455"
+  },
+  "response": [
+    {
+      "resourceLocation": "Observation/obs-req-001",
+      "statusCode": 201,
+      "requestResourceId": "obs-req-001"
+    },
+    {
+      "resourceLocation": "Observation/456",
+      "statusCode": 201,
+      "requestResourceId": "obs-req-002"
+    },
+    {
+      "operationOutcome": {
+        "issue": [
+          {
+            "severity": "error",
+            "code": "invalid",
+            "details": {
+              "text": "Missing required field 'valueQuantity'"
+            }
+          },
+          {
+            "severity": "warning",
+            "code": "invalid",
+            "details": {
+              "text": "expect an identifer"
+            }
+          }
+        ]
+      },
+      "statusCode": 400,
+      "requestResourceId": "obs-req-003"
+    },
+    {
+      "operationOutcome": {
+        "issue": [
+          {
+            "severity": "error",
+            "code": "exception",
+            "details": {
+              "text": "Internal server error while processing Patient resource"
+            }
+          },
+          {
+            "severity": "error",
+            "code": "exception",
+            "details": {
+              "text": "Subject missing"
+            }
+          }
+        ]
+      },
+      "statusCode": 500,
+      "requestResourceId": "patient-req-004"
+    }
+  ]
+}

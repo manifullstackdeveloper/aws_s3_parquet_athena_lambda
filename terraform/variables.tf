@@ -34,10 +34,10 @@ variable "force_destroy_buckets" {
   default     = true
 }
 
-variable "enable_s3_versioning" {
-  description = "Enable S3 bucket versioning. Disable to reduce costs. Not required for this use case."
-  type        = bool
-  default     = false
+variable "s3_retention_days" {
+  description = "Number of days to retain files in S3 buckets before deletion. Set to 0 to disable retention policy (keep files indefinitely)."
+  type        = number
+  default     = 0
 }
 
 variable "s3_filter_prefix" {
@@ -70,12 +70,6 @@ variable "use_aws_public_layer" {
   default     = true
 }
 
-variable "create_ssm_parameters" {
-  description = "Create SSM parameters for bucket configuration. Set to false if you lack SSM permissions."
-  type        = bool
-  default     = false
-}
-
 variable "glue_database_name" {
   description = "Glue database name"
   type        = string
@@ -98,5 +92,53 @@ variable "glue_partition_date_start" {
   description = "Start date for partition projection (YYYY-MM-DD)"
   type        = string
   default     = "2025-01-01"
+}
+
+variable "athena_workgroup_name" {
+  description = "Name of the Athena workgroup for queries"
+  type        = string
+  default     = "fhir-analytics"
+}
+
+variable "athena_results_retention_days" {
+  description = "Number of days to retain Athena query results in S3. Set to 0 to disable retention policy (keep results indefinitely)."
+  type        = number
+  default     = 30
+}
+
+variable "lambda_timeout" {
+  description = "Lambda function timeout in seconds"
+  type        = number
+  default     = 300
+}
+
+variable "lambda_memory_size" {
+  description = "Lambda function memory size in MB (128-10240, must be multiple of 64)"
+  type        = number
+  default     = 512
+}
+
+variable "lambda_reserved_concurrency" {
+  description = "Reserved concurrency for Lambda function (0 = no limit, set to limit concurrent executions for cost control)"
+  type        = number
+  default     = 10
+}
+
+variable "error_rate_threshold" {
+  description = "Error rate threshold for CloudWatch alarms (number of errors per period)"
+  type        = number
+  default     = 5
+}
+
+variable "alert_email" {
+  description = "Email address for CloudWatch alarm notifications (leave empty to disable email alerts)"
+  type        = string
+  default     = ""
+}
+
+variable "enable_staleness_alarm" {
+  description = "Enable alarm for no invocations in 24 hours (staleness check)"
+  type        = bool
+  default     = false
 }
 

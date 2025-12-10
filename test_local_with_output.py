@@ -17,31 +17,30 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import Lambda functions
 from lambda_function import (
-    read_json_from_s3 as read_json_logic,
     flatten_json,
     add_partition_columns
 )
 
 
 def read_json_from_file(file_path: str):
-    """Read JSON from local file"""
+    """Read JSON from local file - expects structure with 'meta' and 'response'"""
     with open(file_path, 'r') as f:
         content = f.read()
     
-    # Try to parse as JSON array first, then single object
-    try:
-        data = json.loads(content)
-        if isinstance(data, list):
-            return data
-        else:
-            return [data]
-    except json.JSONDecodeError:
-        # Try JSONL (newline-delimited JSON)
-        records = []
-        for line in content.strip().split('\n'):
-            if line.strip():
-                records.append(json.loads(line))
-        return records
+    # Parse JSON - expecting structure with 'meta' and 'response'
+    data = json.loads(content)
+    
+    # Validate structure
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected JSON object, got {type(data)}")
+    
+    if 'meta' not in data or 'response' not in data:
+        raise ValueError("JSON must contain 'meta' and 'response' fields")
+    
+    if not isinstance(data['response'], list):
+        raise ValueError("'response' field must be an array")
+    
+    return data
 
 
 def process_json_to_parquet(input_file: str, output_dir: str = "output"):
@@ -62,28 +61,42 @@ def process_json_to_parquet(input_file: str, output_dir: str = "output"):
     
     # Read JSON
     print(f"\n📄 Reading JSON file...")
-    records = read_json_from_file(input_file)
-    print(f"✓ Read {len(records)} JSON records")
+    payload = read_json_from_file(input_file)
+    response_items = payload.get('response', [])
+    print(f"✓ Read JSON payload with {len(response_items)} response items")
     
     # Print input structure
     print(f"\n📊 Input Structure:")
-    for i, record in enumerate(records, 1):
+    print(f"  Meta fields: {list(payload.get('meta', {}).keys())}")
+    print(f"  Response items: {len(response_items)}")
+    for i, item in enumerate(response_items, 1):
         outcome_count = 0
-        if 'operationOutcome' in record and isinstance(record['operationOutcome'], list):
-            outcome_count = len(record['operationOutcome'])
-        print(f"  Record {i}: {outcome_count} operationOutcome entries")
+        if 'operationOutcome' in item and isinstance(item.get('operationOutcome'), dict):
+            issues = item.get('operationOutcome', {}).get('issue', [])
+            outcome_count = len(issues) if isinstance(issues, list) else 0
+        print(f"  Response {i}: statusCode={item.get('statusCode')}, {outcome_count} operationOutcome issues")
+    
+    # Determine source from meta or filename - use as-is without mapping
+    meta = payload.get('meta', {})
+    source = meta.get('source', '')
+    if not source:
+        # Fallback: determine from filename
+        source = 'lca' if 'lca' in input_file else 'dxa'
+    
+    # Get s3Filename from meta or use input filename
+    s3_filename = meta.get('s3Filename') or os.path.basename(input_file)
     
     # Flatten JSON
     print(f"\n🔄 Flattening JSON...")
-    df = flatten_json(records)
+    df = flatten_json(payload, s3_filename, source)
     print(f"✓ Flattened to {len(df)} rows with {len(df.columns)} columns")
     
     # Show columns
     print(f"\n📋 Columns: {list(df.columns)}")
     
-    # Add partition columns
-    source = 'lca-persist' if 'lca' in input_file else 'dxa-persist'
-    df = add_partition_columns(df, source)
+    # Add partition columns (use responseTs from meta if available)
+    response_ts = meta.get('responseTs')
+    df = add_partition_columns(df, source, response_ts)
     
     # Generate output filename
     base_name = Path(input_file).stem
@@ -126,9 +139,10 @@ def process_json_to_parquet(input_file: str, output_dir: str = "output"):
     
     # Statistics
     print(f"\n📈 Statistics:")
-    print(f"  Input records: {len(records)}")
+    print(f"  Input response items: {len(response_items)}")
     print(f"  Output rows: {len(df)}")
-    print(f"  Explosion ratio: {len(df) / len(records):.2f}x")
+    if len(response_items) > 0:
+        print(f"  Explosion ratio: {len(df) / len(response_items):.2f}x")
     
     # Count rows by operationOutcome presence
     has_outcome = df['operationOutcomeCode'].notna().sum()
@@ -280,8 +294,13 @@ if __name__ == "__main__":
     elif args.all:
         process_all_test_files(output_dir=args.output_dir)
     else:
-        # Default: process example_payload.json
-        if Path("example_payload.json").exists():
+        # Default: process test_data/example_payload.json
+        test_file = Path("test_data/example_payload.json")
+        if test_file.exists():
+            output_file, df = process_json_to_parquet(str(test_file), args.output_dir)
+            print(f"\n✓ To inspect the file, run:")
+            print(f"  python test_local_with_output.py --inspect {output_file}")
+        elif Path("example_payload.json").exists():
             output_file, df = process_json_to_parquet("example_payload.json", args.output_dir)
             print(f"\n✓ To inspect the file, run:")
             print(f"  python test_local_with_output.py --inspect {output_file}")

@@ -37,8 +37,7 @@ graph TB
     end
     
     subgraph "Configuration"
-        SSM[SSM Parameter Store<br/>/myapp/source-bucket<br/>/myapp/target-bucket]
-        Env[Environment Variables<br/>SOURCE_BUCKET<br/>TARGET_BUCKET]
+        Env[Environment Variables<br/>SOURCE_BUCKET<br/>TARGET_BUCKET<br/>LOG_LEVEL]
     end
     
     subgraph "Storage Layer"
@@ -61,7 +60,6 @@ graph TB
     PL2 -->|Write JSON| S3S
     S3S -->|S3 Event<br/>ObjectCreated| Lambda
     Layer -.->|Dependencies| Lambda
-    Lambda -.->|Read Config| SSM
     Lambda -.->|Read Config| Env
     Lambda -->|Write Parquet<br/>Snappy| S3T
     Lambda -->|Logs| CW
@@ -92,7 +90,7 @@ sequenceDiagram
     participant S3Source as S3 Source<br/>(fhir-lca-persist)
     participant EventBridge as S3 Event Notification
     participant Lambda as Analytics Lambda
-    participant SSM as SSM Parameter Store
+    participant EnvVars as Environment Variables
     participant S3Target as S3 Target<br/>(fhir-ingest-analytics)
     participant CloudWatch as CloudWatch
     participant Glue as AWS Glue
@@ -105,8 +103,8 @@ sequenceDiagram
     
     activate Lambda
     Lambda->>CloudWatch: Log invocation start
-    Lambda->>SSM: Get bucket configuration
-    SSM-->>Lambda: Return config
+    Lambda->>EnvVars: Read environment variables
+    EnvVars-->>Lambda: Return config
     Lambda->>S3Source: Download JSON file
     S3Source-->>Lambda: Return file contents
     
@@ -141,7 +139,7 @@ sequenceDiagram
 flowchart TD
     Start([Lambda Invoked]) --> ParseEvent[Parse S3 Event]
     ParseEvent --> ExtractInfo[Extract Bucket & Key]
-    ExtractInfo --> GetConfig[Get Configuration<br/>SSM or Environment]
+    ExtractInfo --> GetConfig[Get Configuration<br/>Environment Variables]
     
     GetConfig --> DetermineSource{Determine Source<br/>System}
     DetermineSource -->|lca-persist| SourceLCA[source = lca-persist]
@@ -421,7 +419,7 @@ graph TB
     end
     
     subgraph "Configuration Permissions"
-        SSMRead[SSM Parameter Store<br/>ssm:GetParameter<br/>ssm:GetParameters<br/>/myapp/*]
+        EnvVars[Environment Variables<br/>SOURCE_BUCKET<br/>TARGET_BUCKET<br/>LOG_LEVEL]
     end
     
     subgraph "Logging Permissions"
@@ -437,7 +435,7 @@ graph TB
     
     Policy --> S3Read
     Policy --> S3Write
-    Policy --> SSMRead
+    Policy --> EnvVars
     Policy --> CWLogs
     Policy -.-> VPCPerms
     
@@ -446,7 +444,7 @@ graph TB
     style ManagedPolicy fill:#2196F3,color:#fff
     style S3Read fill:#FF9800,color:#fff
     style S3Write fill:#FF9800,color:#fff
-    style SSMRead fill:#9C27B0,color:#fff
+    style EnvVars fill:#9C27B0,color:#fff
     style CWLogs fill:#ff9800,color:#fff
 ```
 
@@ -458,7 +456,7 @@ sequenceDiagram
     participant KMS as AWS KMS
     participant S3Source as S3 Source<br/>(Encrypted)
     participant S3Target as S3 Target<br/>(Encrypted)
-    participant SSM as SSM<br/>(Encrypted)
+    participant EnvVars as Environment Variables<br/>(Set by Terraform)
     
     Note over S3Source: Server-Side Encryption<br/>AES-256
     
@@ -467,10 +465,8 @@ sequenceDiagram
     KMS-->>S3Source: Decrypted data
     S3Source-->>Lambda: Return JSON (TLS 1.2)
     
-    Lambda->>SSM: GetParameter (encrypted)
-    SSM->>KMS: Decrypt parameter
-    KMS-->>SSM: Decrypted value
-    SSM-->>Lambda: Return config (TLS 1.2)
+    Lambda->>EnvVars: Read environment variables
+    EnvVars-->>Lambda: Return config
     
     Note over Lambda: Process data in memory<br/>(ephemeral)
     
@@ -609,7 +605,7 @@ mindmap
       Query result caching
       Workgroup limits
     Network
-      VPC endpoints S3, SSM
+      VPC endpoints S3 (if using VPC)
       Minimize data transfer
       Same-region resources
 ```
@@ -814,7 +810,7 @@ sequenceDiagram
     participant Output as Test Results
     
     Dev->>Local: Run python test_local.py
-    Local->>Mock: Setup mock S3/SSM
+    Local->>Mock: Setup mock S3
     Local->>Lambda: Import function
     Local->>Mock: Mock read JSON
     Mock-->>Lambda: Return test data

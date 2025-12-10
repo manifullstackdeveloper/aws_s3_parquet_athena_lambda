@@ -58,18 +58,22 @@ variable "log_retention_days" {
 
 **Savings:** ~85% reduction in log storage costs
 
-### 2. Lambda Memory
+### 2. Lambda Memory & Reserved Concurrency
 
-**Default:** 512MB  
+**Default:** 512MB, Reserved Concurrency: 10  
 **Cost:** $0.0000166667/GB-second
 
 **Optimize:**
 ```hcl
-# terraform/main.tf
-memory_size = 256  # For small files
+# terraform/terraform.tfvars
+lambda_memory_size = 256  # For small files
+lambda_reserved_concurrency = 5  # Limit concurrent executions
 ```
 
-**Savings:** 50% reduction in compute costs
+**Benefits:**
+- Reserved concurrency prevents runaway costs from unexpected scaling
+- Memory tuning reduces compute costs
+- Configurable via Terraform variables
 
 ### 3. S3 Storage Class
 

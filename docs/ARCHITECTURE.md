@@ -15,8 +15,9 @@ graph TB
     
     subgraph "Processing Layer"
         Lambda[Lambda Function<br/>JSON to Parquet<br/>Python 3.12]
-        SSM[SSM Parameter Store<br/>/myapp/*<br/>Configuration]
         CW[CloudWatch Logs<br/>Monitoring & Alerts]
+        Metrics[CloudWatch Metrics<br/>Custom Metrics]
+        Alarms[CloudWatch Alarms<br/>SNS Notifications]
     end
     
     subgraph "Storage Layer"
@@ -31,8 +32,9 @@ graph TB
     
     PL -->|Write JSON| S3S
     S3S -->|S3 Event Trigger| Lambda
-    Lambda -.->|Read Config| SSM
     Lambda -->|Write Logs| CW
+    Lambda -->|Publish Metrics| Metrics
+    Metrics -->|Trigger| Alarms
     Lambda -->|Write Parquet| S3T
     S3T -->|Auto Catalog| Glue
     Glue <-->|Metadata| Athena
@@ -42,7 +44,7 @@ graph TB
     style PL fill:#e1f5ff
     style S3S fill:#ffcdd2
     style Lambda fill:#c5e1a5
-    style SSM fill:#d1c4e9
+    style EnvVars fill:#d1c4e9
     style CW fill:#ffe0b2
     style S3T fill:#b2dfdb
     style Glue fill:#fff9c4
@@ -83,18 +85,19 @@ graph TB
 **Concurrency:** Reserved capacity optional
 
 **Key Features:**
-- Automatic JSON flattening
-- Handles nested structures
-- Supports JSON arrays and JSONL
+- Automatic JSON flattening with operationOutcome explosion
+- Handles nested structures (meta + response array)
+- Skips 2xx status codes (only processes errors)
 - Duplicate detection
-- Error handling and retry logic
-- Structured logging
+- Comprehensive error handling with categorized errors
+- Structured logging with request ID tracking
+- CloudWatch custom metrics
+- Cost optimization (reserved concurrency)
 
 **Dependencies (Lambda Layer):**
-- `awswrangler==3.5.2` - AWS data operations
-- `pandas==2.1.4` - Data manipulation
-- `pyarrow==14.0.2` - Parquet I/O
-- `boto3==1.34.34` - AWS SDK
+- Uses AWS public layer: `AWSSDKPandas-Python312`
+- Includes: `awswrangler`, `pandas`, `pyarrow`, `boto3`
+- No custom layer build needed (configurable)
 
 **Environment Variables:**
 ```bash
@@ -162,15 +165,17 @@ Enabled for automatic partition discovery without MSCK REPAIR
 
 ### 5. Amazon Athena
 
-**Query Engine:** Presto-based SQL  
-**Database:** `fhir_analytics`  
-**Workgroup:** Primary (configurable)
+**Query Engine:** Presto-based SQL (Athena engine version 3)  
+**Database:** `fhir_analytics` (auto-created)  
+**Workgroup:** `fhir-analytics` (auto-created)  
+**Results Bucket:** `{target-bucket}-athena-results` (auto-created)
 
 **Query Performance:**
-- Partition pruning: Automatic
+- Partition pruning: Automatic (partition projection)
 - Predicate pushdown: Enabled
 - Column pruning: Enabled
-- Compressed data: Faster queries
+- Compressed data: Snappy compression
+- No MSCK REPAIR needed: Partition projection enabled
 
 ## Data Flow
 
@@ -181,7 +186,7 @@ stateDiagram-v2
     [*] --> Trigger
     Trigger --> Invocation: S3 Event
     Invocation --> Configuration: Extract bucket/key
-    Configuration --> Reading: Get config from SSM/env
+    Configuration --> Reading: Get config from environment variables
     Reading --> Validation: Download JSON from S3
     Validation --> Transformation: Parse JSON
     Transformation --> DuplicateCheck: Flatten & add partitions
@@ -211,7 +216,7 @@ stateDiagram-v2
 
 3. **Configuration:**
    - Reads environment variables
-   - Fallback to SSM Parameter Store if needed
+   - Configuration via environment variables (set by Terraform)
    - Determines source system from bucket/key
 
 4. **Reading:**
@@ -249,30 +254,29 @@ graph TD
     
     LambdaRole -->|Read| S3Source[S3 Source Bucket<br/>s3:GetObject<br/>s3:ListBucket]
     LambdaRole -->|Write| S3Target[S3 Target Bucket<br/>s3:PutObject<br/>s3:HeadObject]
-    LambdaRole -->|Read| SSM[SSM Parameters<br/>ssm:GetParameter]
     LambdaRole -->|Write| CW[CloudWatch Logs<br/>logs:CreateLogGroup<br/>logs:CreateLogStream<br/>logs:PutLogEvents]
-    LambdaRole -.->|Optional| VPC[VPC Network<br/>ec2:CreateNetworkInterface<br/>ec2:DescribeNetworkInterfaces]
+    LambdaRole -->|Publish| Metrics[CloudWatch Metrics<br/>cloudwatch:PutMetricData]
     
     style LambdaRole fill:#4CAF50,color:#fff
     style S3Source fill:#2196F3,color:#fff
     style S3Target fill:#2196F3,color:#fff
-    style SSM fill:#9C27B0,color:#fff
     style CW fill:#FF9800,color:#fff
-    style VPC fill:#607D8B,color:#fff
+    style Metrics fill:#FF9800,color:#fff
 ```
 
 **Least Privilege Principle:**
 - Read-only access to source bucket
 - Write-only to specific prefix in target bucket
+- CloudWatch metrics publish (custom namespace only)
 - No delete permissions
-- Parameter Store scoped to `/myapp/*`
+- No SSM access (uses environment variables)
 
 ### Encryption
 
 **Data at Rest:**
 - S3: AES-256 server-side encryption
 - Parquet: Compression (not encryption by default)
-- SSM: Encrypted parameters (optional KMS)
+- Environment Variables: Set by Terraform (encrypted at rest by Lambda)
 
 **Data in Transit:**
 - TLS 1.2+ for all AWS API calls
@@ -294,14 +298,13 @@ graph TB
             NAT[NAT Gateway]
         end
         
-        VPCE[VPC Endpoints<br/>S3 Gateway Endpoint<br/>SSM Interface Endpoint]
+        VPCE[VPC Endpoints<br/>S3 Gateway Endpoint]
     end
     
     Lambda -->|Route Table| NAT
     Lambda -.->|Private Link| VPCE
     NAT -->|Internet Gateway| Internet[Internet<br/>CloudWatch API]
     VPCE -.->|Private| S3[S3 Service]
-    VPCE -.->|Private| SSMService[SSM Service]
     
     style VPC fill:#e3f2fd
     style PrivateSubnet fill:#fff3e0
@@ -364,17 +367,23 @@ Total:        ~$0.89/month
 
 ### CloudWatch Metrics
 
-**Lambda Metrics:**
+**Lambda Metrics (AWS/Lambda):**
 - `Invocations` - Total executions
 - `Duration` - Execution time
 - `Errors` - Failed executions
 - `Throttles` - Rate limiting
 - `ConcurrentExecutions` - Parallel invocations
 
-**Custom Metrics:**
-- Records processed per invocation
-- File size processed
-- Parquet write time
+**Custom Metrics (FHIRAnalytics/Lambda):**
+- `Errors` - Errors by category
+- `ErrorsByCategory` - Error breakdown
+- `FilesProcessed` - Successfully processed files
+- `FilesFailed` - Failed file processing
+- `InvocationDuration` - Function execution time
+- `ParquetWriteDuration` - Parquet write time
+- `RecordsProcessed` - Number of records
+- `InputFileSize` - Input file size
+- `FatalErrors` - Fatal errors
 
 ### CloudWatch Logs
 
@@ -391,17 +400,18 @@ Total:        ~$0.89/month
 [2025-12-03T14:30:46.123Z] [a1b2c3d4] [INFO] Successfully wrote Parquet file
 ```
 
-### Alarms
+### Alarms (Automatically Created)
 
 **Critical Alarms:**
-1. Error rate > 1% over 5 minutes
+1. Error rate > threshold (default: 5 per 5 minutes)
 2. Duration > 80% of timeout
-3. Throttling detected
-4. No invocations in 24 hours (staleness)
+3. Throttling detected (> 0)
+4. Fatal errors detected (> 0)
 
-**Warning Alarms:**
-1. Duration trending upward
-2. Memory utilization > 80%
+**Optional Alarms:**
+1. No invocations in 24 hours (staleness check)
+
+**All alarms send notifications to SNS topic** (email subscription optional)
 
 ### Distributed Tracing
 

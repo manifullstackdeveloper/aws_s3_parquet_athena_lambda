@@ -26,23 +26,24 @@ resource "aws_glue_catalog_database" "fhir_analytics" {
 
 **Table Name:** `fhir_ingest_analytics`
 
-**Data Columns (16):**
+**Data Columns (15):**
 1. `s3Filename` (string)
-2. `source` (string)
-3. `approximateReceiveCount` (int)
-4. `customerId` (string)
-5. `patientId` (string)
-6. `sourceFhirServer` (string)
-7. `requestResourceId` (string)
-8. `bundleResourceType` (string)
-9. `statusCode` (int)
-10. `operationOutcomeLocation` (string)
-11. `operationOutcomeSeverity` (string)
-12. `operationOutcomeCode` (string)
-13. `operationOutcomeDetail` (string)
-14. `responseTs` (string)
-15. `latencyMs` (int)
-16. `datastoreId` (string)
+2. `approximateReceiveCount` (int)
+3. `customerId` (string)
+4. `patientId` (string)
+5. `sourceFhirServer` (string)
+6. `requestResourceId` (string)
+7. `bundleResourceType` (string)
+8. `statusCode` (int)
+9. `operationOutcomeLocation` (string)
+10. `operationOutcomeSeverity` (string)
+11. `operationOutcomeCode` (string)
+12. `operationOutcomeDetail` (string)
+13. `responseTs` (timestamp)
+14. `latencyMs` (int)
+15. `datastoreId` (string)
+
+**Note:** Partition columns (`source`, `ingest_date`, `hour`) are NOT in the data columns - they're extracted from the S3 path.
 
 **Partition Keys (3):**
 1. `source` (string) - Source system (lca-persist, dxa-persist)
@@ -119,14 +120,16 @@ aws glue get-table \
 
 ## Querying in Athena
 
-### Setup Athena
+### Athena WorkGroup (Automatically Created)
 
-```bash
-# Set query results location (one-time)
-aws athena create-work-group \
-  --name fhir-analytics \
-  --configuration "ResultConfigurationUpdates={OutputLocation=s3://your-athena-results/}"
-```
+**The Athena workgroup is automatically created by Terraform!**
+
+- ✅ WorkGroup name: `fhir-analytics`
+- ✅ Results location: `s3://{target-bucket}-athena-results/results/`
+- ✅ Encryption: SSE-S3
+- ✅ Engine version: Athena engine version 3
+
+**No manual setup required!** Just query in Athena Console.
 
 ### Example Queries
 

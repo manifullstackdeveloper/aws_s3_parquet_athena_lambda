@@ -17,13 +17,11 @@ flowchart TD
     TFPlan --> Review{Review<br/>Changes?}
     Review -->|Issues| ConfigTF
     Review -->|Approved| TFApply[terraform apply]
-    TFApply --> CreateAthena[Create Athena Table<br/>athena_ddl.sql]
-    CreateAthena --> TestUpload[Upload Test File]
+    TFApply --> TestUpload[Upload Test File]
     TestUpload --> VerifyLogs[Check CloudWatch Logs]
     VerifyLogs --> VerifyS3[Verify S3 Output]
     VerifyS3 --> QueryAthena[Query in Athena]
-    QueryAthena --> SetupAlarms[Setup CloudWatch Alarms]
-    SetupAlarms --> End([Deployment Complete])
+    QueryAthena --> End([Deployment Complete])
     
     style Start fill:#4CAF50,color:#fff
     style End fill:#4CAF50,color:#fff
@@ -149,9 +147,12 @@ glue_table_location = "s3://fhir-ingest-analytics/data/"
 - ✅ IAM role and policies
 - ✅ S3 event notification trigger
 - ✅ CloudWatch Log Group
-- ✅ SSM parameters for configuration
 - ✅ **AWS Glue Database** (`fhir_analytics`)
 - ✅ **AWS Glue Table** (`fhir_ingest_analytics`) with partition projection
+- ✅ **Athena WorkGroup** (`fhir-analytics`)
+- ✅ **Athena Results Bucket** (for query results)
+- ✅ **CloudWatch Alarms** (error rate, duration, throttles, fatal errors)
+- ✅ **SNS Topic** (for alarm notifications)
 
 ## Step 6: Verify Deployment
 
@@ -256,37 +257,31 @@ GROUP BY operationOutcomeCode, operationOutcomeSeverity
 ORDER BY error_count DESC;
 ```
 
-## Step 9: Set Up Monitoring (Optional but Recommended)
+## Step 9: Monitoring (Automatically Configured)
 
-### Create CloudWatch Alarms
+**CloudWatch alarms and monitoring are automatically created by Terraform!**
 
-```bash
-# Error alarm
-aws cloudwatch put-metric-alarm \
-  --alarm-name fhir-lambda-errors \
-  --alarm-description "Alert on Lambda errors" \
-  --metric-name Errors \
-  --namespace AWS/Lambda \
-  --statistic Sum \
-  --period 300 \
-  --evaluation-periods 1 \
-  --threshold 1 \
-  --comparison-operator GreaterThanThreshold \
-  --dimensions Name=FunctionName,Value=fhir-analytics-json-to-parquet
+### What's Created
 
-# Duration alarm (timeout warning)
-aws cloudwatch put-metric-alarm \
-  --alarm-name fhir-lambda-duration \
-  --alarm-description "Alert on long Lambda duration" \
-  --metric-name Duration \
-  --namespace AWS/Lambda \
-  --statistic Average \
-  --period 300 \
-  --evaluation-periods 2 \
-  --threshold 240000 \
-  --comparison-operator GreaterThanThreshold \
-  --dimensions Name=FunctionName,Value=fhir-analytics-json-to-parquet
+- ✅ **CloudWatch Alarms:**
+  - Error rate alarm
+  - Duration alarm (80% of timeout)
+  - Throttles alarm
+  - Fatal errors alarm
+  - Staleness alarm (optional)
+
+- ✅ **SNS Topic:** For alarm notifications
+- ✅ **Custom Metrics:** Published to `FHIRAnalytics/Lambda` namespace
+- ✅ **Error Tracking:** By category (S3ReadError, JSONParseError, etc.)
+
+### Configure Email Alerts (Optional)
+
+Add to `terraform.tfvars`:
+```hcl
+alert_email = "your-email@example.com"
 ```
+
+After `terraform apply`, confirm the email subscription in AWS SNS Console.
 
 ## Step 10: Production Readiness Checklist
 
@@ -297,10 +292,12 @@ aws cloudwatch put-metric-alarm \
 - [ ] **Glue database created (`fhir_analytics`)**
 - [ ] **Glue table created (`fhir_ingest_analytics`)**
 - [ ] **Partition projection enabled**
+- [ ] **Athena workgroup created (`fhir-analytics`)**
+- [ ] **CloudWatch alarms configured**
+- [ ] **SNS topic created for alerts**
 - [ ] Athena queries working
 - [ ] Test file processed successfully
 - [ ] Parquet files visible in S3
-- [ ] CloudWatch alarms configured
 - [ ] IAM permissions reviewed (least privilege)
 - [ ] S3 bucket encryption enabled
 - [ ] S3 bucket versioning enabled

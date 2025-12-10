@@ -183,16 +183,26 @@ terraform apply
 
 ### 4. Query in Athena
 
-**Glue database and table are already created by Terraform!**
+**Everything is ready!** Glue database, table, and Athena workgroup are created by Terraform.
 
 ```bash
-# Just open Athena Console and start querying
+# Open Athena Console
 # https://console.aws.amazon.com/athena/
 
-# Or use AWS CLI:
+# Select:
+# - WorkGroup: fhir-analytics
+# - Database: fhir_analytics
+# - Table: fhir_ingest_analytics
+
+# Start querying immediately!
+```
+
+Or use AWS CLI:
+```bash
 aws athena start-query-execution \
+  --work-group fhir-analytics \
   --query-string "SELECT * FROM fhir_analytics.fhir_ingest_analytics LIMIT 10" \
-  --result-configuration OutputLocation=s3://your-athena-results/
+  --result-configuration OutputLocation=s3://fhir-ingest-analytics-athena-results/results/
 ```
 
 ### 5. Test
@@ -209,29 +219,15 @@ Check CloudWatch Logs and S3 target bucket for results.
 
 ### Environment Variables
 
-The Lambda function supports configuration via environment variables or SSM Parameter Store:
+The Lambda function is configured via environment variables (set by Terraform):
 
-| Variable | SSM Parameter | Default | Description |
-|----------|--------------|---------|-------------|
-| `SOURCE_BUCKET` | `/myapp/source-bucket` | `fhir-lca-persist` | Source S3 bucket |
-| `TARGET_BUCKET` | `/myapp/target-bucket` | `fhir-ingest-analytics` | Target S3 bucket |
-| `LOG_LEVEL` | - | `INFO` | Logging level |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SOURCE_BUCKET` | `fhir-lca-persist` | Source S3 bucket |
+| `TARGET_BUCKET` | `fhir-ingest-analytics` | Target S3 bucket |
+| `LOG_LEVEL` | `INFO` | Logging level |
 
-### SSM Parameters
-
-Create SSM parameters for dynamic configuration:
-
-```bash
-aws ssm put-parameter \
-  --name /myapp/source-bucket \
-  --value fhir-lca-persist \
-  --type String
-
-aws ssm put-parameter \
-  --name /myapp/target-bucket \
-  --value fhir-ingest-analytics \
-  --type String
-```
+**Note:** These are automatically set by Terraform - no manual configuration needed.
 
 ## 📦 Deployment
 
@@ -292,34 +288,14 @@ jobs:
 
 ## 🔍 Athena Setup
 
-### Create Database and Table
+**All Athena resources are automatically created by Terraform!**
 
-Run the SQL in `athena_ddl.sql`:
+- ✅ Glue Database: `fhir_analytics`
+- ✅ Glue Table: `fhir_ingest_analytics`
+- ✅ Athena WorkGroup: `fhir-analytics`
+- ✅ Query Results Bucket: `{target-bucket}-athena-results`
 
-```sql
-CREATE DATABASE IF NOT EXISTS fhir_analytics;
-
-CREATE EXTERNAL TABLE IF NOT EXISTS fhir_analytics.fhir_ingest_analytics (
-  s3Filename STRING,
-  source STRING,
-  approximateReceiveCount INT,
-  customerId STRING,
-  patientId STRING,
-  -- ... (see athena_ddl.sql for complete schema)
-)
-PARTITIONED BY (
-  source STRING,
-  ingest_date STRING,
-  hour STRING
-)
-STORED AS PARQUET
-LOCATION 's3://fhir-ingest-analytics/data/'
-TBLPROPERTIES (
-  'parquet.compression'='SNAPPY',
-  'projection.enabled'='true'
-  -- ... (partition projection configuration)
-);
-```
+**No manual SQL execution needed!** Just run `terraform apply` and start querying.
 
 ### Query Examples
 
@@ -371,17 +347,40 @@ aws athena start-query-execution \
 
 ## Monitoring
 
-Check Lambda execution in CloudWatch Logs:
+**Monitoring is automatically configured by Terraform!**
+
+### CloudWatch Alarms (Auto-created)
+- Error rate alarm
+- Duration alarm (80% of timeout)
+- Throttles alarm
+- Fatal errors alarm
+
+### Custom Metrics (Published by Lambda)
+- `Errors` - By error category
+- `FilesProcessed` - Successfully processed files
+- `FilesFailed` - Failed file processing
+- `InvocationDuration` - Execution time
+- `ParquetWriteDuration` - Write performance
+- `RecordsProcessed` - Number of records
+
+### View Logs
 
 ```bash
 aws logs tail /aws/lambda/fhir-analytics-json-to-parquet --follow
 ```
 
-Key metrics in CloudWatch:
-- Invocations
-- Errors  
-- Duration
-- Throttles
+### Error Triage
+
+Errors are categorized for easy triage:
+- `ConfigurationError` - Config issues
+- `S3ReadError` - S3 read failures
+- `S3WriteError` - S3 write failures
+- `JSONParseError` - JSON parsing errors
+- `JSONValidationError` - Schema validation
+- `DataTransformationError` - Data processing issues
+- `PartitioningError` - Partition generation issues
+
+View error breakdown in CloudWatch Metrics → `FHIRAnalytics/Lambda` namespace.
 
 ## Troubleshooting
 

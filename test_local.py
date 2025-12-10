@@ -147,7 +147,7 @@ def test_lambda_locally(json_file="example_payload.json"):
     test_file = Path("test_data") / json_file
     if not test_file.exists():
         # Copy example payload if test file doesn't exist
-        example = Path("example_payload.json")
+        example = Path("dxa-persist-input.json")
         if example.exists():
             test_file.parent.mkdir(exist_ok=True)
             import shutil
@@ -237,9 +237,7 @@ def run_all_tests():
     print()
     
     test_files = [
-        "example_payload.json",
-        "test_single_object.json",
-        "test_jsonl.json"
+        "dxa-persist-input.json"
     ]
     
     results = []
@@ -268,7 +266,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test Lambda function locally")
     parser.add_argument(
         '--file',
-        default='example_payload.json',
+        default='dxa-persist-input.json',
         help='JSON file to test (in test_data directory)'
     )
     parser.add_argument(

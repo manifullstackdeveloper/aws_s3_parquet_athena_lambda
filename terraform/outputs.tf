@@ -100,6 +100,156 @@ output "athena_query_examples" {
   EOT
 }
 
+# Data Flow Architecture
+output "data_flow_architecture" {
+  description = "Complete data flow architecture: S3 Source -> Lambda -> S3 Target"
+  value = {
+    source = {
+      bucket      = local.source_bucket
+      bucket_arn  = aws_s3_bucket.source.arn
+      trigger     = "S3 Event Notification (ObjectCreated)"
+      filter      = "${var.s3_filter_prefix}*.json"
+    }
+    processor = {
+      lambda_function = aws_lambda_function.analytics_lambda.function_name
+      lambda_arn      = aws_lambda_function.analytics_lambda.arn
+      description     = "Converts JSON to Parquet with partitioning"
+    }
+    destination = {
+      bucket         = local.target_bucket
+      bucket_arn     = aws_s3_bucket.target.arn
+      output_path    = "s3://${local.target_bucket}/data/"
+      partition_path = "s3://${local.target_bucket}/data/source={source}/ingest_date={date}/hour={hour}/"
+    }
+    catalog = {
+      database = aws_glue_catalog_database.fhir_analytics.name
+      table    = aws_glue_catalog_table.fhir_ingest_analytics.name
+      location = aws_glue_catalog_table.fhir_ingest_analytics.storage_descriptor[0].location
+    }
+    athena = {
+      workgroup      = aws_athena_workgroup.fhir_analytics.name
+      workgroup_arn   = aws_athena_workgroup.fhir_analytics.arn
+      results_bucket = aws_s3_bucket.athena_results.id
+      query_policy   = aws_iam_policy.athena_query.arn
+    }
+  }
+}
+
+# Athena Outputs
+output "athena_workgroup_name" {
+  description = "Name of the Athena workgroup"
+  value       = aws_athena_workgroup.fhir_analytics.name
+}
+
+output "athena_workgroup_arn" {
+  description = "ARN of the Athena workgroup"
+  value       = aws_athena_workgroup.fhir_analytics.arn
+}
+
+output "athena_results_bucket" {
+  description = "S3 bucket for Athena query results"
+  value       = aws_s3_bucket.athena_results.id
+}
+
+output "athena_results_bucket_arn" {
+  description = "ARN of Athena results bucket"
+  value       = aws_s3_bucket.athena_results.arn
+}
+
+output "athena_query_policy_arn" {
+  description = "ARN of IAM policy for Athena queries (attach to users/roles who need to query)"
+  value       = aws_iam_policy.athena_query.arn
+}
+
+output "athena_query_instructions" {
+  description = "Instructions for querying Athena"
+  value = <<-EOT
+  
+  # Athena Query Setup Instructions:
+  
+  1. Attach IAM Policy to your user/role:
+     Policy ARN: ${aws_iam_policy.athena_query.arn}
+  
+  2. Use Athena Workgroup: ${aws_athena_workgroup.fhir_analytics.name}
+  
+  3. Query Results Location: s3://${aws_s3_bucket.athena_results.id}/results/
+  
+  4. Example Query:
+     SELECT * FROM ${aws_glue_catalog_database.fhir_analytics.name}.${aws_glue_catalog_table.fhir_ingest_analytics.name}
+     WHERE ingest_date = '2025-01-15'
+     LIMIT 10;
+  
+  5. In Athena Console:
+     - Go to: https://console.aws.amazon.com/athena/
+     - Select workgroup: ${aws_athena_workgroup.fhir_analytics.name}
+     - Select database: ${aws_glue_catalog_database.fhir_analytics.name}
+     - Run queries!
+  
+  EOT
+}
+
+# Monitoring Outputs
+output "sns_topic_arn" {
+  description = "ARN of SNS topic for Lambda alerts"
+  value       = aws_sns_topic.lambda_alerts.arn
+}
+
+output "cloudwatch_alarms" {
+  description = "CloudWatch alarm names for monitoring"
+  value = {
+    errors           = aws_cloudwatch_metric_alarm.lambda_errors.alarm_name
+    custom_errors     = aws_cloudwatch_metric_alarm.custom_error_rate.alarm_name
+    duration         = aws_cloudwatch_metric_alarm.lambda_duration.alarm_name
+    throttles        = aws_cloudwatch_metric_alarm.lambda_throttles.alarm_name
+    fatal_errors     = aws_cloudwatch_metric_alarm.fatal_errors.alarm_name
+    no_invocations   = var.enable_staleness_alarm ? aws_cloudwatch_metric_alarm.no_invocations[0].alarm_name : null
+  }
+}
+
+output "monitoring_instructions" {
+  description = "Instructions for monitoring and error triage"
+  value = <<-EOT
+  
+  # Monitoring & Error Triage:
+  
+  1. CloudWatch Alarms:
+     - Error Rate: ${aws_cloudwatch_metric_alarm.lambda_errors.alarm_name}
+     - Duration: ${aws_cloudwatch_metric_alarm.lambda_duration.alarm_name}
+     - Throttles: ${aws_cloudwatch_metric_alarm.lambda_throttles.alarm_name}
+     - Fatal Errors: ${aws_cloudwatch_metric_alarm.fatal_errors.alarm_name}
+  
+  2. SNS Topic for Alerts: ${aws_sns_topic.lambda_alerts.arn}
+     ${var.alert_email != "" ? "   - Email subscription: ${var.alert_email}" : "   - No email subscription configured"}
+  
+  3. Custom Metrics Namespace: FHIRAnalytics/Lambda
+     - Errors: Error count by category
+     - ErrorsByCategory: Error breakdown by type
+     - FilesProcessed: Successfully processed files
+     - FilesFailed: Failed file processing
+     - InvocationDuration: Function execution time
+     - ParquetWriteDuration: Parquet write time
+     - RecordsProcessed: Number of records processed
+  
+  4. Error Categories for Triage:
+     - ConfigurationError: Configuration issues
+     - S3ReadError: S3 read failures
+     - S3WriteError: S3 write failures
+     - JSONParseError: JSON parsing errors
+     - JSONValidationError: JSON validation failures
+     - DataTransformationError: Data transformation issues
+     - PartitioningError: Partitioning failures
+     - UnknownError: Unhandled errors
+  
+  5. View Logs:
+     aws logs tail /aws/lambda/${aws_lambda_function.analytics_lambda.function_name} --follow
+  
+  6. View Metrics:
+     - Go to CloudWatch Console → Metrics → FHIRAnalytics/Lambda
+     - Filter by ErrorCategory dimension for error triage
+  
+  EOT
+}
+
 # Deployment Summary
 output "deployment_summary" {
   description = "Deployment summary with all important information"
@@ -112,6 +262,9 @@ output "deployment_summary" {
     glue_table        = aws_glue_catalog_table.fhir_ingest_analytics.name
     s3_data_location  = "s3://${local.target_bucket}/data/"
     partition_projection_enabled = aws_glue_catalog_table.fhir_ingest_analytics.parameters["projection.enabled"]
+    data_flow        = "${local.source_bucket} -> Lambda -> ${local.target_bucket}/data/"
+    athena_workgroup  = aws_athena_workgroup.fhir_analytics.name
+    athena_results_bucket = aws_s3_bucket.athena_results.id
   }
 }
 
