@@ -170,12 +170,8 @@ def process_all_test_files(test_dir: str = "test_data", output_dir: str = "outpu
         print(f"❌ Test directory not found: {test_dir}")
         return
     
-    # Find all JSON files
+    # Find all JSON files in test_data directory
     json_files = list(test_path.glob("*.json"))
-    
-    # Also check for example_payload.json in root
-    if Path("example_payload.json").exists():
-        json_files.append(Path("example_payload.json"))
     
     if not json_files:
         print(f"❌ No JSON files found in {test_dir}")
@@ -294,16 +290,20 @@ if __name__ == "__main__":
     elif args.all:
         process_all_test_files(output_dir=args.output_dir)
     else:
-        # Default: process test_data/example_payload.json
-        test_file = Path("test_data/example_payload.json")
-        if test_file.exists():
-            output_file, df = process_json_to_parquet(str(test_file), args.output_dir)
-            print(f"\n✓ To inspect the file, run:")
-            print(f"  python test_local_with_output.py --inspect {output_file}")
-        elif Path("example_payload.json").exists():
-            output_file, df = process_json_to_parquet("example_payload.json", args.output_dir)
-            print(f"\n✓ To inspect the file, run:")
-            print(f"  python test_local_with_output.py --inspect {output_file}")
+        # Default: process first available file from test_data/
+        test_data_dir = Path("test_data")
+        if test_data_dir.exists():
+            json_files = list(test_data_dir.glob("*.json"))
+            if json_files:
+                test_file = json_files[0]
+                print(f"📁 Processing: {test_file}")
+                output_file, df = process_json_to_parquet(str(test_file), args.output_dir)
+                print(f"\n✓ To inspect the file, run:")
+                print(f"  python test_local_with_output.py --inspect {output_file}")
+            else:
+                print("❌ Error: No JSON files found in test_data/ directory")
+                parser.print_help()
         else:
+            print("❌ Error: test_data/ directory not found")
             parser.print_help()
 

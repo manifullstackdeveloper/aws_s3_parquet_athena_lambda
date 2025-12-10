@@ -138,7 +138,7 @@ def test_lambda_function():
         # Test with lca-persist data
         print("\n📝 Test 1: Processing lca-persist-input.json")
         print("-" * 70)
-        event1 = create_s3_event('fhir-lca-persist', 'test/lca-persist-input.json')
+        event1 = create_s3_event('fhir-lca-persist', 'test_data/lca-persist-input.json')
         context1 = Mock()
         context1.aws_request_id = 'test-request-001'
         
@@ -160,7 +160,7 @@ def test_lambda_function():
         # Test with dxa-persist data
         print("\n📝 Test 2: Processing dxa-persist-input.json")
         print("-" * 70)
-        event2 = create_s3_event('fhir-dxa-persist', 'test/dxa-persist-input.json')
+        event2 = create_s3_event('fhir-dxa-persist', 'test_data/dxa-persist-input.json')
         context2 = Mock()
         context2.aws_request_id = 'test-request-002'
         
