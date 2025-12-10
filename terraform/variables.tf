@@ -142,3 +142,21 @@ variable "enable_staleness_alarm" {
   default     = false
 }
 
+variable "enable_sns_alerts" {
+  description = "Enable SNS topic creation for CloudWatch alarms. Set to false if you don't have SNS permissions or want to use existing topics."
+  type        = bool
+  default     = false
+}
+
+variable "create_athena_workgroup" {
+  description = "Create Athena workgroup. Set to false if workgroup already exists (use 'terraform import' to import existing workgroup instead)."
+  type        = bool
+  default     = true
+}
+
+variable "enable_cloudwatch_alarms" {
+  description = "Enable CloudWatch metric alarms for Lambda monitoring. Set to false if you don't have CloudWatch PutMetricAlarm permissions."
+  type        = bool
+  default     = false
+}
+

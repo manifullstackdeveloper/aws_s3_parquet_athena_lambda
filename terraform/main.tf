@@ -89,6 +89,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "source" {
     id     = "delete-old-files"
     status = "Enabled"
 
+    filter {}
+
     expiration {
       days = var.s3_retention_days
     }
@@ -105,6 +107,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "target" {
   rule {
     id     = "delete-old-files"
     status = "Enabled"
+
+    filter {}
 
     expiration {
       days = var.s3_retention_days
@@ -281,7 +285,8 @@ resource "aws_lambda_function" "analytics_lambda" {
   ]
   
   # Cost optimization: Reserved concurrency to prevent runaway costs
-  reserved_concurrent_executions = var.lambda_reserved_concurrency
+  # Only set if value is greater than 0 (0 means no limit)
+  reserved_concurrent_executions = var.lambda_reserved_concurrency > 0 ? var.lambda_reserved_concurrency : null
   
   environment {
     variables = {
@@ -550,6 +555,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "athena_results" {
     id     = "delete-old-results"
     status = "Enabled"
 
+    filter {
+      prefix = "results/"
+    }
+
     expiration {
       days = var.athena_results_retention_days
     }
@@ -559,7 +568,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "athena_results" {
 }
 
 # Athena Workgroup
+# Note: If workgroup already exists, set create_athena_workgroup = false
+# and import it: terraform import aws_athena_workgroup.fhir_analytics fhir-analytics
 resource "aws_athena_workgroup" "fhir_analytics" {
+  count       = var.create_athena_workgroup ? 1 : 0
   name        = var.athena_workgroup_name
   description = "Athena workgroup for FHIR analytics queries"
   state       = "ENABLED"
@@ -618,10 +630,10 @@ resource "aws_iam_policy" "athena_query" {
           "athena:ListQueryExecutions",
           "athena:GetWorkGroup"
         ]
-        Resource = [
-          aws_athena_workgroup.fhir_analytics.arn,
-          "arn:aws:athena:${var.aws_region}:${data.aws_caller_identity.current.account_id}:datacatalog/*"
-        ]
+        Resource = concat(
+          var.create_athena_workgroup ? [aws_athena_workgroup.fhir_analytics[0].arn] : ["arn:aws:athena:${var.aws_region}:${data.aws_caller_identity.current.account_id}:workgroup/${var.athena_workgroup_name}"],
+          ["arn:aws:athena:${var.aws_region}:${data.aws_caller_identity.current.account_id}:datacatalog/*"]
+        )
       },
       {
         Sid    = "GlueCatalogAccess"
@@ -692,8 +704,9 @@ resource "aws_iam_policy" "athena_query" {
 # CloudWatch Monitoring & Alarms
 # ============================================================================
 
-# SNS Topic for Alerts
+# SNS Topic for Alerts (optional - requires SNS permissions)
 resource "aws_sns_topic" "lambda_alerts" {
+  count        = var.enable_sns_alerts ? 1 : 0
   name         = "${local.function_name}-alerts"
   display_name = "FHIR Analytics Lambda Alerts"
   
@@ -707,14 +720,15 @@ resource "aws_sns_topic" "lambda_alerts" {
 
 # SNS Topic Subscription (email - optional, can be configured via variable)
 resource "aws_sns_topic_subscription" "lambda_alerts_email" {
-  count     = var.alert_email != "" ? 1 : 0
-  topic_arn = aws_sns_topic.lambda_alerts.arn
+  count     = var.enable_sns_alerts && var.alert_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.lambda_alerts[0].arn
   protocol  = "email"
   endpoint  = var.alert_email
 }
 
 # CloudWatch Alarm: High Error Rate
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
+  count               = var.enable_cloudwatch_alarms ? 1 : 0
   alarm_name          = "${local.function_name}-high-error-rate"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -730,13 +744,14 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
     FunctionName = aws_lambda_function.analytics_lambda.function_name
   }
 
-  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+  alarm_actions = var.enable_sns_alerts ? [aws_sns_topic.lambda_alerts[0].arn] : []
 
   tags = local.common_tags
 }
 
 # CloudWatch Alarm: Custom Error Rate (from custom metrics)
 resource "aws_cloudwatch_metric_alarm" "custom_error_rate" {
+  count               = var.enable_cloudwatch_alarms ? 1 : 0
   alarm_name          = "${local.function_name}-custom-error-rate"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -748,13 +763,14 @@ resource "aws_cloudwatch_metric_alarm" "custom_error_rate" {
   alarm_description   = "This metric monitors custom error rate from application"
   treat_missing_data  = "notBreaching"
 
-  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+  alarm_actions = var.enable_sns_alerts ? [aws_sns_topic.lambda_alerts[0].arn] : []
 
   tags = local.common_tags
 }
 
 # CloudWatch Alarm: Duration (approaching timeout)
 resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
+  count               = var.enable_cloudwatch_alarms ? 1 : 0
   alarm_name          = "${local.function_name}-high-duration"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -770,13 +786,14 @@ resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
     FunctionName = aws_lambda_function.analytics_lambda.function_name
   }
 
-  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+  alarm_actions = var.enable_sns_alerts ? [aws_sns_topic.lambda_alerts[0].arn] : []
 
   tags = local.common_tags
 }
 
 # CloudWatch Alarm: Throttles
 resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
+  count               = var.enable_cloudwatch_alarms ? 1 : 0
   alarm_name          = "${local.function_name}-throttles"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -792,13 +809,14 @@ resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
     FunctionName = aws_lambda_function.analytics_lambda.function_name
   }
 
-  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+  alarm_actions = var.enable_sns_alerts ? [aws_sns_topic.lambda_alerts[0].arn] : []
 
   tags = local.common_tags
 }
 
 # CloudWatch Alarm: Fatal Errors (from custom metrics)
 resource "aws_cloudwatch_metric_alarm" "fatal_errors" {
+  count               = var.enable_cloudwatch_alarms ? 1 : 0
   alarm_name          = "${local.function_name}-fatal-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -810,14 +828,14 @@ resource "aws_cloudwatch_metric_alarm" "fatal_errors" {
   alarm_description   = "This metric monitors fatal errors that prevent function execution"
   treat_missing_data  = "notBreaching"
 
-  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+  alarm_actions = var.enable_sns_alerts ? [aws_sns_topic.lambda_alerts[0].arn] : []
 
   tags = local.common_tags
 }
 
 # CloudWatch Alarm: No Invocations (staleness check)
 resource "aws_cloudwatch_metric_alarm" "no_invocations" {
-  count               = var.enable_staleness_alarm ? 1 : 0
+  count               = var.enable_cloudwatch_alarms && var.enable_staleness_alarm ? 1 : 0
   alarm_name          = "${local.function_name}-no-invocations"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 1
@@ -833,7 +851,7 @@ resource "aws_cloudwatch_metric_alarm" "no_invocations" {
     FunctionName = aws_lambda_function.analytics_lambda.function_name
   }
 
-  alarm_actions = [aws_sns_topic.lambda_alerts.arn]
+  alarm_actions = var.enable_sns_alerts ? [aws_sns_topic.lambda_alerts[0].arn] : []
 
   tags = local.common_tags
 }

@@ -28,3 +28,20 @@ glue_table_name = "fhir_ingest_analytics"
 glue_partition_sources = ["lca-persist", "dxa-persist"]
 glue_partition_date_start = "2025-01-01"
 
+# Lambda configuration
+lambda_timeout = 300
+lambda_memory_size = 512
+lambda_reserved_concurrency = 0  # Set to 0 for no limit, or a number to limit concurrent executions
+
+# Athena configuration
+athena_workgroup_name = "fhir-analytics"
+athena_results_retention_days = 30  # Number of days to retain Athena query results (0 = keep indefinitely)
+create_athena_workgroup = true  # Set to false if workgroup already exists (use terraform import instead)
+
+# Monitoring & Alerts
+enable_cloudwatch_alarms = false  # Set to true to create CloudWatch metric alarms (requires CloudWatch PutMetricAlarm permissions)
+enable_sns_alerts = false  # Set to true to create SNS topic for CloudWatch alarms (requires SNS permissions)
+alert_email = ""  # Email address for alarm notifications (leave empty to disable)
+error_rate_threshold = 5
+enable_staleness_alarm = false  # Enable alarm if Lambda hasn't been invoked in 24 hours
+
