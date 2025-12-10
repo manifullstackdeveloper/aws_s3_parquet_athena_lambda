@@ -65,3 +65,4 @@ samconfig.toml
 # Temporary files
 fix_*.sh
 cleanup_*.sh
+.coverage
